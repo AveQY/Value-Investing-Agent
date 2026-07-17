@@ -1,5 +1,7 @@
 # AI Agent Fund - 智能投资顾问系统
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 基于 Spring Boot 和 AI 技术构建的智能投资顾问系统，专注于提供基金和股票投资相关的智能咨询服务。
 
 ## 项目简介
@@ -276,7 +278,7 @@ docker run -d -p 8123:8123 ai-agent
 
 ## 许可证
 
-[待添加]
+本项目基于 [MIT License](LICENSE) 开源。
 
 ## 联系方式
 
