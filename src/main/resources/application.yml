@@ -1,0 +1,72 @@
+spring:
+  application:
+    name: ai-agent
+  profiles:
+    active: local
+  ai:
+    openai:
+      api-key: your-api-key
+      base-url: https://api.edgefn.net/v1
+      chat:
+        options:
+          model:
+        #向量模型
+      embedding:
+        options:
+          model: text-embedding-3-small
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ai-agent
+    username: postgres
+    password: your_password
+    driver-class-name: org.postgresql.Driver
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+
+server:
+  port: 8123
+  servlet:
+    context-path: /api
+# springdoc-openapi config
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+  group-configs:
+    - group: 'default'
+      paths-to-match: '/**'
+      packages-to-scan: com.aweqy.aiagent.controller
+# knife4j config
+knife4j:
+  enable: false
+  setting:
+    language: zh_cn
+
+# 修改日志级别，查看 Spring AI 更多调用细节
+logging:
+  level:
+    org.springframework.ai: DEBUG
+
+app:
+  chat:
+    memory:
+      dir: tmp/chat-memory
+    models:
+      default-model-id: deepseek-r1
+      storage-file: tmp/chat-models/custom-models.json
+      presets:
+        - id: deepseek-r1
+          name: DeepSeek R1
+          provider: openai-compatible
+          base-url: ${spring.ai.openai.base-url}
+          api-key: ${spring.ai.openai.api-key}
+          provider-model-id: ${spring.ai.openai.chat.options.model}
+  api:
+    security:
+      enabled: false
+      header-name: X-API-KEY
+      key:
