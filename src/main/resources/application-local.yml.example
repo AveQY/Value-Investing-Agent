@@ -1,0 +1,19 @@
+# 本地开发配置模板
+# 使用方法：复制本文件为 application-local.yml 并填入真实值
+# （application-local.yml 已被 .gitignore 忽略，不会提交到仓库）
+spring:
+  ai:
+    openai:
+      # OpenAI 兼容接口的 API Key
+      api-key: your-api-key
+      base-url: https://api.openai.com/v1
+      chat:
+        options:
+          # 聊天模型名称，例如 gpt-4o-mini、deepseek-chat 等
+          model: your-model-name
+
+  # PostgreSQL 数据源（使用 PgVector 向量存储时需要）
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ai-agent
+    username: postgres
+    password: your-password

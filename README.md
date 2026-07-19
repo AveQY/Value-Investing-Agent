@@ -46,17 +46,24 @@
 ### 1. 克隆项目
 
 ```bash
-git clone <repository-url>
-cd ai-agent
+git clone https://github.com/AveQY/Value-Investing-Agent.git
+cd Value-Investing-Agent
 ```
 
 ### 2. 配置环境
 
-项目使用 `application-local.yml` 作为本地开发配置，已预置必要的配置项：
+项目使用 `application-local.yml` 作为本地开发配置（包含敏感信息，已被 `.gitignore` 忽略，不会提交到仓库）。
 
-- OpenAI API Key
-- PostgreSQL 数据库连接
-- 搜索 API 密钥
+复制配置模板并按需修改：
+
+```bash
+cp src/main/resources/application-local.yml.example src/main/resources/application-local.yml
+```
+
+需要配置的主要项：
+
+- OpenAI 兼容接口的 API Key、Base URL 和模型
+- PostgreSQL 数据库连接（可选，用于 PgVector 向量存储）
 
 ### 3. 启动 PostgreSQL (可选)
 
@@ -153,8 +160,7 @@ ai-agent/
 │   │       ├── document/         # 知识库文档
 │   │       ├── sql/              # SQL 脚本
 │   │       ├── application.yml
-│   │       └── application-local.yml
-│   └── test/                     # 测试代码
+│   │       └── application-local.yml.example  # 本地配置模板
 ├── docs/                         # 文档
 ├── pom.xml                       # Maven 配置
 └── README.md                     # 项目说明
@@ -208,20 +214,6 @@ spring:
 
 本地开发配置，包含敏感信息，已添加到 `.gitignore`。
 
-## 测试
-
-运行所有测试：
-
-```bash
-./mvnw test
-```
-
-测试覆盖：
-- Controller 层测试
-- Service 层测试
-- 工具类测试
-- RAG 功能测试
-
 ## 开发指南
 
 ### 添加新的 AI 工具
@@ -264,7 +256,6 @@ docker run -d -p 8123:8123 ai-agent
 - **模块化设计**: 清晰的代码结构和模块划分
 - **多种 AI 集成**: 支持 Spring AI、LangChain4j、OpenAI SDK
 - **灵活的 RAG**: 支持多种向量存储方案
-- **完善的测试**: 单元测试和集成测试覆盖
 - **标准化 API**: RESTful 设计，完整的 Swagger 文档
 
 ## 相关文档

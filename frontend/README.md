@@ -25,7 +25,7 @@ npm run dev
 
 ## 关于 SSE
 
-当前仓库源码内未发现 `doChatWithLoveAppSse` 或其他 SSE Controller，前端已预留 SSE 流式解析逻辑：
+后端已提供 SSE 流式接口（`/fund/chat/sse`、`/fund/chat/rag/sse`、`/fund/chat/tools/sse`）：
 
-- 当 `VITE_ENABLE_SSE_CHAT=true` 时，前端会优先尝试流式接口
-- 若 SSE 接口不存在或未启用，会自动回落到现有 REST 接口，并以增量渲染方式展示回复
+- 当 `VITE_ENABLE_SSE_CHAT=true`（默认）时，前端优先使用流式接口
+- 若 SSE 接口不可用，会自动回落到 REST 接口，并以增量渲染方式展示回复
