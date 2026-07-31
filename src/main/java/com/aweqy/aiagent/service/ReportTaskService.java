@@ -69,7 +69,8 @@ public class ReportTaskService {
                     request.advisorStyle(),
                     modelId,
                     request.reportSourceContent(),
-                    request.mode()
+                    request.mode(),
+                    false
             );
             ReportTaskRecord success = new ReportTaskRecord(
                     record.taskId(),
@@ -83,14 +84,13 @@ public class ReportTaskService {
                     Instant.now()
             );
             tasks.put(record.taskId(), success);
-            chatMemoryMetadataService.enrichLatestReport(
+            chatMemoryMetadataService.updateReportTaskRecord(
                     request.chatId(),
-                    request.message(),
+                    record.taskId(),
                     report.title(),
                     report.reportFileName(),
                     report.reportDownloadPath(),
                     "SUCCESS",
-                    record.taskId(),
                     null
             );
         } catch (Exception ex) {
@@ -106,14 +106,13 @@ public class ReportTaskService {
                     Instant.now()
             );
             tasks.put(record.taskId(), failed);
-            chatMemoryMetadataService.enrichLatestReport(
+            chatMemoryMetadataService.updateReportTaskRecord(
                     request.chatId(),
-                    request.message(),
+                    record.taskId(),
                     "报告生成失败",
                     null,
                     null,
                     "FAILED",
-                    record.taskId(),
                     ex.getMessage()
             );
         }

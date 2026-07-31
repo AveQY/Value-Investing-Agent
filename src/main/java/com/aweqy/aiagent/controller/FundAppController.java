@@ -384,27 +384,32 @@ public class FundAppController {
     private SseEmitter createSseEmitter(Flux<String> stream) {
         SseEmitter emitter = new SseEmitter(0L);
         AtomicReference<Disposable> subscriptionRef = new AtomicReference<>();
+        AtomicReference<Disposable> heartbeatRef = new AtomicReference<>();
         AtomicBoolean connectionClosed = new AtomicBoolean(false);
 
         sendConnectedEvent(emitter, connectionClosed);
 
         Disposable subscription = stream.subscribe(
-                chunk -> sendChunk(emitter, chunk, subscriptionRef, connectionClosed),
-                error -> handleStreamError(emitter, error, subscriptionRef, connectionClosed),
-                () -> completeEmitter(emitter, connectionClosed)
+                chunk -> sendChunk(emitter, chunk, subscriptionRef, heartbeatRef, connectionClosed),
+                error -> handleStreamError(emitter, error, subscriptionRef, heartbeatRef, connectionClosed),
+                () -> completeEmitter(emitter, connectionClosed, heartbeatRef)
         );
 
         subscriptionRef.set(subscription);
+        heartbeatRef.set(Flux.interval(java.time.Duration.ofSeconds(10))
+                .subscribe(ignored -> sendPing(emitter, subscriptionRef, heartbeatRef, connectionClosed)));
 
         emitter.onCompletion(() -> {
             connectionClosed.set(true);
+            disposeSubscription(heartbeatRef.get());
         });
         emitter.onTimeout(() -> {
             connectionClosed.set(true);
-            completeEmitter(emitter, connectionClosed);
+            completeEmitter(emitter, connectionClosed, heartbeatRef);
         });
         emitter.onError(error -> {
             connectionClosed.set(true);
+            disposeSubscription(heartbeatRef.get());
             if (!isClientDisconnectException(error)) {
                 disposeSubscription(subscriptionRef.get());
             }
@@ -432,9 +437,30 @@ public class FundAppController {
         }
     }
 
+    private void sendPing(SseEmitter emitter,
+                          AtomicReference<Disposable> subscriptionRef,
+                          AtomicReference<Disposable> heartbeatRef,
+                          AtomicBoolean connectionClosed) {
+        if (connectionClosed.get()) {
+            return;
+        }
+
+        try {
+            emitter.send(SseEmitter.event()
+                    .name("ping")
+                    .data(Map.of("timestamp", Instant.now().toString())));
+        } catch (Exception ex) {
+            connectionClosed.set(true);
+            disposeSubscription(subscriptionRef.get());
+            disposeSubscription(heartbeatRef.get());
+            completeEmitter(emitter, connectionClosed, heartbeatRef);
+        }
+    }
+
     private void sendChunk(SseEmitter emitter,
                            String chunk,
                            AtomicReference<Disposable> subscriptionRef,
+                           AtomicReference<Disposable> heartbeatRef,
                            AtomicBoolean connectionClosed) {
         if (connectionClosed.get()) {
             return;
@@ -447,27 +473,32 @@ public class FundAppController {
         } catch (Exception ex) {
             if (isClientDisconnectException(ex)) {
                 connectionClosed.set(true);
-                completeEmitter(emitter, connectionClosed);
+                disposeSubscription(heartbeatRef.get());
+                completeEmitter(emitter, connectionClosed, heartbeatRef);
                 return;
             }
             connectionClosed.set(true);
             disposeSubscription(subscriptionRef.get());
-            handleStreamError(emitter, ex, subscriptionRef, connectionClosed);
+            disposeSubscription(heartbeatRef.get());
+            handleStreamError(emitter, ex, subscriptionRef, heartbeatRef, connectionClosed);
         }
     }
 
     private void handleStreamError(SseEmitter emitter,
                                    Throwable error,
                                    AtomicReference<Disposable> subscriptionRef,
+                                   AtomicReference<Disposable> heartbeatRef,
                                    AtomicBoolean connectionClosed) {
         connectionClosed.set(true);
 
         if (isClientDisconnectException(error)) {
-            completeEmitter(emitter, connectionClosed);
+            disposeSubscription(heartbeatRef.get());
+            completeEmitter(emitter, connectionClosed, heartbeatRef);
             return;
         }
 
         disposeSubscription(subscriptionRef.get());
+        disposeSubscription(heartbeatRef.get());
 
         try {
             emitter.send(SseEmitter.event()
@@ -476,7 +507,7 @@ public class FundAppController {
         } catch (Exception ignored) {
             // Ignore secondary transport exceptions and close the emitter quietly.
         } finally {
-            completeEmitter(emitter, connectionClosed);
+            completeEmitter(emitter, connectionClosed, heartbeatRef);
         }
     }
 
@@ -487,8 +518,17 @@ public class FundAppController {
     }
 
     private void completeEmitter(SseEmitter emitter, AtomicBoolean connectionClosed) {
+        completeEmitter(emitter, connectionClosed, null);
+    }
+
+    private void completeEmitter(SseEmitter emitter,
+                                 AtomicBoolean connectionClosed,
+                                 AtomicReference<Disposable> heartbeatRef) {
         if (connectionClosed != null) {
             connectionClosed.set(true);
+        }
+        if (heartbeatRef != null) {
+            disposeSubscription(heartbeatRef.get());
         }
         try {
             emitter.complete();

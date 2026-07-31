@@ -160,6 +160,69 @@ public class ChatMemoryMetadataService {
         );
     }
 
+    public void updateReportTaskRecord(String chatId,
+                                        String reportTaskId,
+                                        String reportTitle,
+                                        String reportFileName,
+                                        String reportDownloadPath,
+                                        String reportStatus,
+                                        String reportError) {
+        if (!StringUtils.hasText(chatId) || !StringUtils.hasText(reportTaskId) || fileBasedChatMemory == null) {
+            return;
+        }
+
+        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            if (updateReportTaskRecordOnce(
+                    chatId,
+                    reportTaskId,
+                    reportTitle,
+                    reportFileName,
+                    reportDownloadPath,
+                    reportStatus,
+                    reportError
+            )) {
+                return;
+            }
+            sleepQuietly(RETRY_INTERVAL_MILLIS);
+        }
+    }
+
+    private boolean updateReportTaskRecordOnce(String chatId,
+                                                String reportTaskId,
+                                                String reportTitle,
+                                                String reportFileName,
+                                                String reportDownloadPath,
+                                                String reportStatus,
+                                                String reportError) {
+        if (!fileBasedChatMemory.exists(chatId)) {
+            return false;
+        }
+
+        List<Message> messages = new ArrayList<>(fileBasedChatMemory.getAll(chatId));
+        for (int index = messages.size() - 1; index >= 0; index--) {
+            Message message = messages.get(index);
+            if (message.getMessageType() != MessageType.ASSISTANT
+                    || !reportTaskId.equals(String.valueOf(safeMetadata(message).get(REPORT_TASK_ID_KEY)))) {
+                continue;
+            }
+
+            messages.set(index, rebuildAssistantMessage(
+                    message,
+                    null,
+                    REPORT_KIND,
+                    reportTitle,
+                    reportFileName,
+                    reportDownloadPath,
+                    reportStatus,
+                    reportTaskId,
+                    reportError
+            ));
+            fileBasedChatMemory.replaceAll(chatId, messages);
+            return true;
+        }
+        return false;
+    }
+
     private void enrichLatestExchange(String chatId,
                                       String userDisplayContent,
                                       ChatTrace trace,

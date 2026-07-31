@@ -309,7 +309,29 @@ public class FundApp {
                                        String advisorStyle,
                                        String modelId,
                                        String reportSourceContent,
+                                       String mode,
+                                       boolean persistReportMessage) {
+        return doChatWithReportInternal(message, chatId, userName, advisorStyle, modelId, reportSourceContent, mode, persistReportMessage);
+    }
+
+    public FundReport doChatWithReport(String message,
+                                       String chatId,
+                                       String userName,
+                                       String advisorStyle,
+                                       String modelId,
+                                       String reportSourceContent,
                                        String mode) {
+        return doChatWithReportInternal(message, chatId, userName, advisorStyle, modelId, reportSourceContent, mode, true);
+    }
+
+    private FundReport doChatWithReportInternal(String message,
+                                                String chatId,
+                                                String userName,
+                                                String advisorStyle,
+                                                String modelId,
+                                                String reportSourceContent,
+                                                String mode,
+                                                boolean persistReportMessage) {
         FundReport directReport = rejectOutOfDomainReport(chatId, message, "report", modelId);
         if (directReport != null) {
             return directReport;
@@ -318,7 +340,8 @@ public class FundApp {
         String normalizedReportMode = normalizeReportMode(mode);
         AdvisorStyle style = resolveReportSourceAdvisorStyle(advisorStyle, normalizedReportMode);
         String sourceAnswer = resolveReportSourceAnswer(message, chatId, style, modelId, reportSourceContent, normalizedReportMode);
-        StructuredFundReport structuredFundReport = chatModelExecutionService.executeWithRetry("润色结构化投资报告", () -> createStandaloneClient(modelId)
+        StructuredFundReport structuredFundReport = chatModelExecutionService.executeWithRetry("润色结构化投资报告", () -> {
+            String raw = createStandaloneClient(modelId)
                 .prompt()
                 .system("""
                         你是一名投资研究报告编辑，需要把现有 AI 分析回答整理成适合 PDF 存档的正式中文报告。
@@ -338,6 +361,7 @@ public class FundApp {
                         4. title 要像正式报告标题，适合文件名展示。
                         5. suggestions 用简短中文提炼报告核心结论。
                         6. 语言要更正式、更适合存档，但不要空泛拔高。
+                        7. reportContent 中禁止使用 Markdown 格式符号（例如 #、**、*、-、`），仅使用纯文本、中文标点和换行。
                         """)
                 .user("""
                         报告面向用户：%s
@@ -353,21 +377,29 @@ public class FundApp {
                         sourceAnswer
                 ))
                 .call()
-                .entity(StructuredFundReport.class));
+                .content();
+            try {
+                return OBJECT_MAPPER.readValue(extractStructuredReportJson(raw), StructuredFundReport.class);
+            } catch (Exception ex) {
+                throw new IllegalStateException("报告结构化内容解析失败", ex);
+            }
+        });
         FundReport fundReport = createFundReport(
                 chatId,
                 structuredFundReport.title(),
                 structuredFundReport.suggestions(),
                 structuredFundReport.reportContent()
         );
-        String reportReply = buildReportDirectReply(fundReport);
-        chatMemoryMetadataService.recordAssistantReport(
-                chatId,
-                reportReply,
-                fundReport.title(),
-                fundReport.reportFileName(),
-                fundReport.reportDownloadPath()
-        );
+        if (persistReportMessage) {
+            String reportReply = buildReportDirectReply(fundReport);
+            chatMemoryMetadataService.recordAssistantReport(
+                    chatId,
+                    reportReply,
+                    fundReport.title(),
+                    fundReport.reportFileName(),
+                    fundReport.reportDownloadPath()
+            );
+        }
         log.info("fundReport: {}", fundReport);
         return fundReport;
     }
@@ -578,6 +610,18 @@ public class FundApp {
         log.info("Rejected non-finance question in {} mode, message={}", modeName, message);
         FundReport report = createFundReport(chatId, FINANCE_ONLY_REPORT_TITLE, FINANCE_ONLY_REPORT_SUGGESTIONS);
         return report;
+    }
+
+    private String extractStructuredReportJson(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            throw new IllegalStateException("报告模型未返回内容");
+        }
+        int start = raw.indexOf('{');
+        int end = raw.lastIndexOf('}');
+        if (start < 0 || end <= start) {
+            throw new IllegalStateException("报告模型返回内容中未找到 JSON 对象");
+        }
+        return raw.substring(start, end + 1).trim();
     }
 
     private FundReport createFundReport(String chatId, String title, List<String> suggestions) {

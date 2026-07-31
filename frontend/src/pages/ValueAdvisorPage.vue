@@ -185,11 +185,7 @@ const hasMessages = computed(() => messages.value.length > 0)
 const hasRecentSessions = computed(() => recentSessions.value.length > 0)
 const charCount = computed(() => draft.value.length)
 const canSubmit = computed(() => draft.value.trim().length > 0 && !pending.value)
-const canGenerateReport = computed(
-  () =>
-    !pending.value &&
-    (draft.value.trim().length > 0 || Boolean(findLatestCompletedAssistantMessage()?.content?.trim())),
-)
+const canGenerateReport = computed(() => draft.value.trim().length > 0 && !pending.value)
 const canSaveModel = computed(
   () =>
     modelForm.name.trim() &&
