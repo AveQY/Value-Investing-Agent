@@ -12,8 +12,10 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -36,6 +38,8 @@ public class ChatModelRegistryService {
     private static final String OPENAI_COMPATIBLE_PROVIDER = "openai-compatible";
     private static final String OPENAI_V1_SUFFIX = "/v1";
     private static final String CHAT_COMPLETIONS_SUFFIX = "/chat/completions";
+    private static final int AI_CONNECT_TIMEOUT_MS = 30_000;
+    private static final int AI_READ_TIMEOUT_MS = 180_000;
 
     private final ChatModelProperties properties;
     private final ObjectMapper objectMapper;
@@ -248,9 +252,16 @@ public class ChatModelRegistryService {
 
     private ChatModel createChatModel(String modelId) {
         StoredChatModel model = resolveModel(modelId);
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(AI_CONNECT_TIMEOUT_MS);
+        requestFactory.setReadTimeout(AI_READ_TIMEOUT_MS);
+        RestClient.Builder restClientBuilder = RestClient.builder()
+                .requestFactory(requestFactory);
+
         OpenAiApi api = OpenAiApi.builder()
                 .baseUrl(normalizeBaseUrl(model.baseUrl()))
                 .apiKey(model.apiKey())
+                .restClientBuilder(restClientBuilder)
                 .build();
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
