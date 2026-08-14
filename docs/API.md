@@ -1,8 +1,8 @@
-# AI Agent Fund API 使用文档
+# AI 价投分析智能体 API 使用文档
 
 ## 概述
 
-AI Agent Fund API 是一个基于 Spring Boot 和 AI 技术构建的智能投资顾问系统，提供基金和股票投资相关的智能咨询服务。
+AI 价投分析智能体 API 是一个基于 Spring Boot 和 AI 技术构建的智能投资顾问系统，提供基金和股票投资相关的智能咨询服务。
 
 - **基础路径**: `/api`
 - **文档地址**: `http://localhost:8123/api/swagger-ui.html`

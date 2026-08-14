@@ -5,7 +5,7 @@ export const advisorStyleOptions = [
   {
     id: 'default',
     label: '默认视角',
-    description: '保持 AI价投向导的默认分析方式与表达风格。',
+    description: '保持 AI价投分析智能体的默认分析方式与表达风格。',
   },
   {
     id: 'buffett_framework',

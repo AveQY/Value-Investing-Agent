@@ -18,7 +18,7 @@ public class OpenApiConfig {
     public OpenAPI fundAppOpenApi() {
         return new OpenAPI()
                 .info(new Info()
-                        .title("AI Agent Fund API")
+                        .title("AI 价投分析智能体 API")
                         .description("AI价投助手对外开放的 RESTful API")
                         .version("v1")
                         .contact(new Contact().name("AI Agent")))

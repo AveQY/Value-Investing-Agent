@@ -1,4 +1,4 @@
-# AI Agent Fund - 智能投资顾问系统
+# AI 价投分析智能体
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 

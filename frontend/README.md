@@ -1,4 +1,4 @@
-# AI Agent Fund Frontend
+# AI 价投分析智能体前端
 
 基于 Vue 3 + Vite + Axios 的前端工作台，包含：
 
