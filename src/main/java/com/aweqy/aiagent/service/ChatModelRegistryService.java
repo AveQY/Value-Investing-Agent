@@ -1,10 +1,12 @@
 package com.aweqy.aiagent.service;
 
 import com.aweqy.aiagent.config.ChatModelProperties;
+import com.aweqy.aiagent.exception.UpstreamModelServiceException;
 import com.aweqy.aiagent.model.ChatModelCatalogResponse;
 import com.aweqy.aiagent.model.ChatModelSummary;
 import com.aweqy.aiagent.model.CreateChatModelRequest;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -12,6 +14,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -30,6 +33,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.StreamSupport;
 
 @Service
 @Slf4j
@@ -65,9 +69,10 @@ public class ChatModelRegistryService {
     }
 
     public synchronized ChatModelSummary addCustomModel(CreateChatModelRequest request) {
+        String modelId = request.modelId().trim();
         StoredChatModel storedModel = new StoredChatModel(
-                generateCustomModelId(request.name(), request.modelId()),
-                request.name().trim(),
+                generateCustomModelId(modelId, modelId),
+                modelId,
                 OPENAI_COMPATIBLE_PROVIDER,
                 request.baseUrl().trim(),
                 request.apiKey().trim(),
@@ -82,6 +87,49 @@ public class ChatModelRegistryService {
 
         boolean isDefaultModel = Objects.equals(storedModel.id(), resolveDefaultModelId());
         return toSummary(storedModel, isDefaultModel);
+    }
+
+    public List<String> discoverModels(String baseUrl, String apiKey) {
+        String normalizedBaseUrl = StringUtils.trimWhitespace(baseUrl);
+        String normalizedApiKey = StringUtils.trimWhitespace(apiKey);
+        if (!StringUtils.hasText(normalizedBaseUrl) || !StringUtils.hasText(normalizedApiKey)) {
+            throw new IllegalArgumentException("Base URL 和 API Key 不能为空");
+        }
+
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(AI_CONNECT_TIMEOUT_MS);
+        requestFactory.setReadTimeout(AI_READ_TIMEOUT_MS);
+        try {
+            JsonNode payload = RestClient.builder()
+                    .requestFactory(requestFactory)
+                    .build()
+                    .get()
+                    .uri(buildModelsUrl(normalizedBaseUrl))
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + normalizedApiKey)
+                    .retrieve()
+                    .body(JsonNode.class);
+            if (payload == null || !payload.path("data").isArray()) {
+                throw new UpstreamModelServiceException("模型服务返回格式不兼容，未找到 data 模型列表");
+            }
+            List<String> modelIds = StreamSupport.stream(
+                            java.util.Spliterators.spliteratorUnknownSize(payload.path("data").elements(), java.util.Spliterator.ORDERED),
+                            false)
+                    .map(node -> node.path("id").asText(""))
+                    .map(String::trim)
+                    .filter(StringUtils::hasText)
+                    .distinct()
+                    .sorted(String.CASE_INSENSITIVE_ORDER)
+                    .toList();
+            if (modelIds.isEmpty()) {
+                throw new UpstreamModelServiceException("模型服务返回的模型列表为空");
+            }
+            return modelIds;
+        } catch (UpstreamModelServiceException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            log.warn("Failed to discover models from {}", normalizedBaseUrl, ex);
+            throw new UpstreamModelServiceException("获取模型列表失败，请检查 Base URL、API Key 和供应商接口是否兼容。", ex);
+        }
     }
 
     public synchronized String resolveModelId(String requestedModelId) {
@@ -248,6 +296,23 @@ public class ChatModelRegistryService {
             indexed.put(model.id(), model);
         }
         return indexed;
+    }
+
+    private String buildModelsUrl(String baseUrl) {
+        String normalized = StringUtils.trimWhitespace(baseUrl);
+        while (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        if (normalized.endsWith("/chat/completions")) {
+            normalized = normalized.substring(0, normalized.length() - "/chat/completions".length());
+        }
+        if (normalized.endsWith("/models")) {
+            return normalized;
+        }
+        if (normalized.endsWith(OPENAI_V1_SUFFIX)) {
+            return normalized + "/models";
+        }
+        return normalized + "/v1/models";
     }
 
     private ChatModel createChatModel(String modelId) {

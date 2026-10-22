@@ -14,6 +14,8 @@ import com.aweqy.aiagent.model.ChatSessionLockResponse;
 import com.aweqy.aiagent.model.ChatSessionCatalogResponse;
 import com.aweqy.aiagent.model.CreateChatModelRequest;
 import com.aweqy.aiagent.model.DeleteHistoryResponse;
+import com.aweqy.aiagent.model.DiscoverChatModelsRequest;
+import com.aweqy.aiagent.model.DiscoverChatModelsResponse;
 import com.aweqy.aiagent.model.ErrorResponse;
 import com.aweqy.aiagent.model.ReportResponse;
 import com.aweqy.aiagent.model.ReportTaskResponse;
@@ -310,6 +312,16 @@ public class FundAppController {
     @Operation(summary = "获取可用聊天模型列表")
     public ResponseEntity<ChatModelCatalogResponse> getModels() {
         return ResponseEntity.ok(chatModelRegistryService.listModels());
+    }
+
+    @PostMapping("/models/discover")
+    @Operation(summary = "获取远端聊天模型列表")
+    public ResponseEntity<DiscoverChatModelsResponse> discoverModels(
+            @Valid @RequestBody DiscoverChatModelsRequest request) {
+        return ResponseEntity.ok(new DiscoverChatModelsResponse(
+                chatModelRegistryService.discoverModels(request.baseUrl(), request.apiKey()),
+                Instant.now()
+        ));
     }
 
     @GetMapping("/runtime-config")

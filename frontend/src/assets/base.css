@@ -1,12 +1,12 @@
 :root {
   font-family: 'Manrope', 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
   color-scheme: light;
-  --bg-primary: #f5efe2;
-  --bg-sidebar: #ece5d8;
-  --bg-surface: #fffdf8;
-  --bg-surface-hover: #f2eadf;
-  --bg-composer: #fffdf7;
-  --bg-user: #efe5d6;
+  --bg-primary: #ffffff;
+  --bg-sidebar: #f7f8fa;
+  --bg-surface: #ffffff;
+  --bg-surface-hover: #f1f3f5;
+  --bg-composer: #ffffff;
+  --bg-user: #f1f3f5;
   --text-primary: #17212b;
   --text-secondary: #536272;
   --text-muted: #7b8894;

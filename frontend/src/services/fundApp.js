@@ -140,6 +140,11 @@ export async function getRuntimeConfig() {
   return data
 }
 
+export async function discoverModels(payload) {
+  const { data } = await http.post('/fund/models/discover', payload)
+  return data
+}
+
 export async function createModel(payload) {
   const { data } = await http.post('/fund/models', payload)
   return data

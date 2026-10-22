@@ -7,9 +7,8 @@ import jakarta.validation.constraints.Size;
 
 @Schema(description = "新增聊天模型请求")
 public record CreateChatModelRequest(
-        @Schema(description = "展示名称", example = "NVIDIA Qwen 3.5 397B A17B")
-        @NotBlank(message = "name 不能为空")
-        @Size(max = 80, message = "name 长度不能超过 80")
+        @Schema(description = "展示名称（兼容旧客户端，服务端会以 modelId 为准）", example = "qwen/qwen3.5-397b-a17b")
+        @Size(max = 120, message = "name 长度不能超过 120")
         String name,
 
         @Schema(description = "OpenAI 兼容基础地址", example = "https://integrate.api.nvidia.com/v1")

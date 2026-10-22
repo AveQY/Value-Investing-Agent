@@ -11,6 +11,7 @@ import {
   buffettToggleAdvisorStyle,
   chatModeOptions,
   createModel,
+  discoverModels,
   createReportTask,
   defaultAdvisorStyle,
   deleteHistory,
@@ -49,6 +50,7 @@ const draft = ref('')
 const messages = ref([])
 const loadingHistory = ref(false)
 const loadingModels = ref(false)
+const loadingRemoteModels = ref(false)
 const pending = ref(false)
 const pendingStatus = ref(null)
 const savingModel = ref(false)
@@ -86,11 +88,11 @@ const sessionMenu = ref({
   y: 0,
 })
 const modelForm = reactive({
-  name: '',
   baseUrl: '',
   modelId: '',
   apiKey: '',
 })
+const discoveredModelIds = ref([])
 
 const suggestionCardsPool = [
   {
@@ -186,9 +188,11 @@ const hasRecentSessions = computed(() => recentSessions.value.length > 0)
 const charCount = computed(() => draft.value.length)
 const canSubmit = computed(() => draft.value.trim().length > 0 && !pending.value)
 const canGenerateReport = computed(() => draft.value.trim().length > 0 && !pending.value)
+const canDiscoverModels = computed(
+  () => Boolean(modelForm.baseUrl.trim() && modelForm.apiKey.trim()) && !loadingRemoteModels.value,
+)
 const canSaveModel = computed(
   () =>
-    modelForm.name.trim() &&
     modelForm.baseUrl.trim() &&
     modelForm.modelId.trim() &&
     modelForm.apiKey.trim() &&
@@ -867,10 +871,10 @@ function readOrCreateSessionClientId() {
 }
 
 function resetModelForm() {
-  modelForm.name = ''
   modelForm.baseUrl = ''
   modelForm.modelId = ''
   modelForm.apiKey = ''
+  discoveredModelIds.value = []
 }
 
 function buildMessage(payload) {
@@ -1494,6 +1498,33 @@ async function loadModels(preferredModelId = '') {
   }
 }
 
+async function discoverRemoteModels() {
+  if (!canDiscoverModels.value) {
+    return
+  }
+
+  loadingRemoteModels.value = true
+  modelErrorMessage.value = ''
+  discoveredModelIds.value = []
+
+  try {
+    const response = await discoverModels({
+      baseUrl: modelForm.baseUrl.trim(),
+      apiKey: modelForm.apiKey.trim(),
+    })
+    discoveredModelIds.value = Array.isArray(response?.modelIds) ? response.modelIds : []
+    if (!discoveredModelIds.value.length) {
+      modelErrorMessage.value = '该供应商没有返回可用模型。'
+    } else if (!modelForm.modelId || !discoveredModelIds.value.includes(modelForm.modelId)) {
+      modelForm.modelId = discoveredModelIds.value[0]
+    }
+  } catch (error) {
+    modelErrorMessage.value = error.message || '获取模型列表失败，请检查地址和密钥。'
+  } finally {
+    loadingRemoteModels.value = false
+  }
+}
+
 async function submitModelForm() {
   if (!canSaveModel.value) {
     return
@@ -1504,7 +1535,7 @@ async function submitModelForm() {
 
   try {
     const createdModel = await createModel({
-      name: modelForm.name.trim(),
+      name: modelForm.modelId.trim(),
       baseUrl: modelForm.baseUrl.trim(),
       apiKey: modelForm.apiKey.trim(),
       modelId: modelForm.modelId.trim(),
@@ -2220,11 +2251,6 @@ function wait(duration) {
 
         <div class="model-dialog__form">
           <label class="model-dialog__field">
-            <span>模型名称</span>
-            <input v-model="modelForm.name" type="text" maxlength="80" placeholder="例如：NVIDIA Qwen 3.5 397B A17B" />
-          </label>
-
-          <label class="model-dialog__field">
             <span>Base URL</span>
             <input
               v-model="modelForm.baseUrl"
@@ -2235,13 +2261,36 @@ function wait(duration) {
           </label>
 
           <label class="model-dialog__field">
-            <span>模型 ID</span>
-            <input v-model="modelForm.modelId" type="text" maxlength="120" placeholder="qwen/qwen3.5-397b-a17b" />
-          </label>
-
-          <label class="model-dialog__field">
             <span>API Key</span>
             <input v-model="modelForm.apiKey" type="password" maxlength="512" placeholder="输入模型密钥" />
+          </label>
+
+          <div class="model-dialog__discover-row">
+            <button
+              type="button"
+              class="composer-button composer-button--muted"
+              :disabled="!canDiscoverModels"
+              @click="discoverRemoteModels"
+            >
+              {{ loadingRemoteModels ? '获取中...' : '获取模型' }}
+            </button>
+            <span class="model-dialog__discover-hint">填写地址和密钥后获取该供应商的模型</span>
+          </div>
+
+          <label class="model-dialog__field">
+            <span>模型 ID</span>
+            <select v-if="discoveredModelIds.length" v-model="modelForm.modelId" class="model-dialog__select">
+              <option v-for="modelId in discoveredModelIds" :key="modelId" :value="modelId">
+                {{ modelId }}
+              </option>
+            </select>
+            <input
+              v-else
+              v-model="modelForm.modelId"
+              type="text"
+              maxlength="120"
+              placeholder="先点击获取模型，也可手动填写"
+            />
           </label>
         </div>
 
@@ -2289,7 +2338,7 @@ function wait(duration) {
                 {{ loadingModels ? '加载模型中...' : '暂无可用模型' }}
               </option>
               <option v-for="model in availableModels" :key="model.id" :value="model.id">
-                {{ model.name }}
+                {{ model.custom ? model.providerModelId : model.name }}
               </option>
             </select>
           </label>
@@ -2950,10 +2999,32 @@ function wait(duration) {
   color: var(--text-primary);
 }
 
-.model-dialog__field input:focus-visible {
+.model-dialog__field input:focus-visible,
+.model-dialog__select:focus-visible {
   outline: none;
   border-color: var(--accent-line);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-line) 26%, transparent);
+}
+
+.model-dialog__select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.model-dialog__discover-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.model-dialog__discover-hint {
+  color: var(--text-muted);
+  font-size: 0.82rem;
 }
 
 .model-dialog__error {

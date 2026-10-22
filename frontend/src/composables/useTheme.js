@@ -2,7 +2,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 const THEME_STORAGE_KEY = 'ai-agent-theme'
 const THEME_COLOR_MAP = {
-  light: '#f5efe2',
+  light: '#ffffff',
   dark: '#101418',
 }
 
