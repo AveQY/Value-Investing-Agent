@@ -105,12 +105,16 @@ public class FundApp {
             1. 当问题涉及“现在、当前、今天、昨天、明天、本周、本月、本季度、截至目前”等相对时间或时区判断时，优先使用“Get current time”工具。
             2. 当用户询问股票或上市公司的最新股价、涨跌幅、开高低收、成交量、实时行情时，优先使用“Get realtime stock quote”工具。
             3. 当用户询问 A 股单只股票的财报、年报、季报、ROE、营收、净利润、现金流、资产负债率、带息债务等财务指标时，优先使用“Search A-share financial reports”工具。
-            4. 如果同一个问题同时需要“当前时间”“最新股价”和“最新财报”，可以同时规划时间工具、股价工具和 A 股财报工具。
-            5. 如果用户询问股票、基金、指数、公司公告或市场新闻的最新信息，必须使用工具。
-            6. 优先使用时间工具处理当前日期/时区判断，优先使用股价工具处理行情，优先使用 A 股财报工具处理 A 股财务报表与核心财务指标，优先使用搜索工具处理新闻、公告和网页公开内容。
-            7. 写文件、下载资源、终端命令、生成 PDF 这类执行型工具，只能在用户明确要求创建本地文件、编写脚本、下载资源、执行命令或导出结果时使用；普通问答不要主动调用。
-            8. 搜索查询词要贴近用户原问题，优先中文表达；A 股财报工具的 stockQuery 可以直接使用原问题或股票代码/公司名；时间工具的 timezoneHint 可以直接使用原问题或明确时区。
-            9. %s
+            4. 当用户询问大盘指数（上证指数、深证成指、创业板指、沪深300、中证500、恒生指数、恒生科技、纳斯达克、标普500、道琼斯）的当前点位或涨跌时，优先使用“Get market index quote”工具。
+            5. 当用户询问某只股票或指数的历史走势、K 线、近一段时间涨跌幅、区间最高最低、回撤等需要历史价格的问题时，优先使用“Get stock price history”工具，days 参数按用户说的时间范围估算（一年约 250）。
+            6. 当用户询问场外基金的净值、涨跌（含基金代码或基金名称）时，优先使用“Get fund NAV”工具。
+            7. 当用户询问汇率（美元、欧元、港元、日元、英镑等兑人民币）时，优先使用“Get exchange rate”工具。
+            8. 如果同一个问题同时需要“当前时间”“最新股价”“历史走势”和“最新财报”，可以同时规划多个工具。
+            9. 如果用户询问股票、基金、指数、公司公告或市场新闻的最新信息，必须使用工具。
+            10. 优先使用时间工具处理当前日期/时区判断，优先使用股价工具处理个股行情，优先使用指数工具处理大盘指数，优先使用历史行情工具处理走势与回撤，优先使用 A 股财报工具处理财务报表，优先使用基金净值工具处理场外基金，优先使用汇率工具处理汇率，优先使用搜索工具处理新闻、公告和网页公开内容。
+            11. 写文件、下载资源、终端命令、生成 PDF 这类执行型工具，只能在用户明确要求创建本地文件、编写脚本、下载资源、执行命令或导出结果时使用；普通问答不要主动调用。
+            12. 搜索查询词要贴近用户原问题，优先中文表达；A 股财报工具的 stockQuery 可以直接使用原问题或股票代码/公司名；时间工具的 timezoneHint 可以直接使用原问题或明确时区。
+            13. %s
 
             你可用的工具如下：
             %s
@@ -165,7 +169,7 @@ public class FundApp {
             3. 严禁重复调用已经执行过的同一工具与同一参数。
             4. 继续补查时，优先补最关键的缺口；如有必要，可以一次规划多个工具调用，但必须保持和用户问题强相关。
             5. 如果当前时间、日期、时区仍然是答案所需但尚未确认的信息缺口，优先补查“Get current time”。
-            6. 最新行情优先用“Get realtime stock quote”；A 股财报结构与财务指标优先用“Search A-share financial reports”；新闻、公告、外部链接优先用“Search for information”。
+            6. 个股最新行情优先用“Get realtime stock quote”；大盘指数用“Get market index quote”；历史走势、K 线与回撤用“Get stock price history”；A 股财报结构与财务指标优先用“Search A-share financial reports”；场外基金净值用“Get fund NAV”；汇率用“Get exchange rate”；新闻、公告、外部链接优先用“Search for information”。
             7. 写文件、下载资源、终端命令、生成 PDF 这类执行型工具，只能在用户明确要求创建本地文件、编写脚本、下载资源、执行命令或导出结果时使用；普通问答不要主动调用。
             8. %s
 
@@ -1169,6 +1173,28 @@ public class FundApp {
                 plannedCalls.add(new PlannedToolCall("Search for information", argumentsJson));
             }
 
+            if (needsMarketIndexTool(message) && !needsFundNavTool(message)
+                    && findToolCallback("Get market index quote") != null) {
+                String argumentsJson = OBJECT_MAPPER.writeValueAsString(new IndexArguments(message));
+                plannedCalls.add(new PlannedToolCall("Get market index quote", argumentsJson));
+            }
+
+            if (needsStockHistoryTool(message) && findToolCallback("Get stock price history") != null) {
+                String argumentsJson = OBJECT_MAPPER.writeValueAsString(
+                        new HistoryArguments(message, estimateHistoryDays(message)));
+                plannedCalls.add(new PlannedToolCall("Get stock price history", argumentsJson));
+            }
+
+            if (needsFundNavTool(message) && findToolCallback("Get fund NAV") != null) {
+                String argumentsJson = OBJECT_MAPPER.writeValueAsString(new FundArguments(message));
+                plannedCalls.add(new PlannedToolCall("Get fund NAV", argumentsJson));
+            }
+
+            if (needsExchangeRateTool(message) && findToolCallback("Get exchange rate") != null) {
+                String argumentsJson = OBJECT_MAPPER.writeValueAsString(new RateArguments(message));
+                plannedCalls.add(new PlannedToolCall("Get exchange rate", argumentsJson));
+            }
+
             if (plannedCalls.size() > limit) {
                 return plannedCalls.subList(0, limit);
             }
@@ -1260,11 +1286,62 @@ public class FundApp {
                 || normalized.contains("press release");
     }
 
+    private boolean needsMarketIndexTool(String message) {
+        String normalized = String.valueOf(message).toLowerCase(Locale.ROOT);
+        return containsAny(normalized,
+                "上证指数", "深证成指", "深成指", "创业板指", "沪深300", "沪深三百", "中证500", "上证50", "科创50",
+                "恒生指数", "恒生科技", "恒指", "纳斯达克", "纳指", "标普", "道琼斯", "道指", "大盘", "指数");
+    }
+
+    private boolean needsStockHistoryTool(String message) {
+        String normalized = String.valueOf(message).toLowerCase(Locale.ROOT);
+        return containsAny(normalized,
+                "走势", "k线", "K线".toLowerCase(Locale.ROOT), "历史行情", "历史价格", "回撤",
+                "近一年", "近三年", "近五年", "近半年", "今年以来", "去年以来", "历年", "涨了多少", "跌了多少", "涨幅多少", "跌幅多少");
+    }
+
+    private boolean needsFundNavTool(String message) {
+        String normalized = String.valueOf(message).toLowerCase(Locale.ROOT);
+        return normalized.contains("基金") || normalized.contains("净值");
+    }
+
+    private boolean needsExchangeRateTool(String message) {
+        String normalized = String.valueOf(message).toLowerCase(Locale.ROOT);
+        return normalized.contains("汇率")
+                || normalized.contains("兑人民币")
+                || normalized.contains("人民币汇率")
+                || normalized.contains("换汇");
+    }
+
+    private Integer estimateHistoryDays(String message) {
+        String normalized = String.valueOf(message);
+        if (containsAny(normalized, "近五年", "五年", "5年")) {
+            return 1000;
+        }
+        if (containsAny(normalized, "近三年", "三年", "3年")) {
+            return 750;
+        }
+        if (containsAny(normalized, "近一年", "一年", "1年", "今年", "去年")) {
+            return 250;
+        }
+        if (containsAny(normalized, "近半年", "半年")) {
+            return 125;
+        }
+        if (containsAny(normalized, "近一月", "一个月", "本月", "上月")) {
+            return 22;
+        }
+        return 250;
+    }
+
     private boolean shouldAttemptToolResolution(String message) {
         return needsCurrentTimeTool(message)
                 || isStockQuoteQuestion(message)
                 || needsFinancialReportTool(message)
-                || needsSearchTool(message);
+                || needsSearchTool(message)
+                || needsMarketIndexTool(message)
+                || needsStockHistoryTool(message)
+                || needsFundNavTool(message)
+                || needsExchangeRateTool(message);
     }
 
     private String buildRealtimeSearchQuery(String message) {
@@ -1625,6 +1702,18 @@ public class FundApp {
     }
 
     private record StockQuoteArguments(String stockQuery) {
+    }
+
+    private record IndexArguments(String indexQuery) {
+    }
+
+    private record HistoryArguments(String stockQuery, Integer days) {
+    }
+
+    private record FundArguments(String fundQuery) {
+    }
+
+    private record RateArguments(String currencyQuery) {
     }
 
     private record FinancialReportArguments(String stockQuery, Integer limit, String period, String focus) {

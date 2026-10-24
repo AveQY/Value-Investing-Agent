@@ -20,10 +20,18 @@ public class ToolRegistration {
         TerminalOperationTool terminalOperationTool = new TerminalOperationTool();
         StockPriceTool stockPriceTool = new StockPriceTool();
         AShareFinancialReportTool aShareFinancialReportTool = new AShareFinancialReportTool();
+        StockHistoryTool stockHistoryTool = new StockHistoryTool();
+        MarketIndexTool marketIndexTool = new MarketIndexTool();
+        FundNavTool fundNavTool = new FundNavTool();
+        ExchangeRateTool exchangeRateTool = new ExchangeRateTool();
         return ToolCallbacks.from(
                 fileOperationTool,
                 currentTimeTool,
                 stockPriceTool,
+                stockHistoryTool,
+                marketIndexTool,
+                fundNavTool,
+                exchangeRateTool,
                 aShareFinancialReportTool,
                 webSearchTool,
                 resourceDownloadTool,
