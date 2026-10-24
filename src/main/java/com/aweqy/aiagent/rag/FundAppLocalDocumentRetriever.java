@@ -10,6 +10,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 本地知识库检索器：
@@ -22,6 +23,14 @@ public class FundAppLocalDocumentRetriever {
 
     // 默认最多返回 3 条本地知识片段
     private static final int DEFAULT_LIMIT = 3;
+
+    // 语法填充词：只表达疑问/时态，不含领域信息，命中它们不代表文档相关。
+    private static final Set<String> STOP_KEYWORDS = Set.of(
+            "最近", "最新", "今天", "昨天", "明天", "当前", "现在", "目前",
+            "为什么", "怎么样", "怎么看", "怎么办", "什么", "多少", "哪些",
+            "如何", "一下", "请问", "给我", "帮我", "讲讲", "说说", "聊聊",
+            "看看", "介绍", "影响", "情况", "问题", "分析"
+    );
 
     // Markdown 文档加载器，负责把本地知识文件读取成 Spring AI 的 Document 对象
     private final FundAppDocumentLoader fundAppDocumentLoader;
@@ -134,6 +143,11 @@ public class FundAppLocalDocumentRetriever {
         }
 
         for (String keyword : keywords) {
+            // 2 字片段和语法填充词（“为什么”“怎么样”等）碰撞噪声太大，不参与打分，
+            // 只保留给摘要定位使用；结构性命中（标题/整句）不受影响。
+            if (keyword.length() < 3 || STOP_KEYWORDS.contains(keyword)) {
+                continue;
+            }
             // 关键词越长，说明语义越完整，因此权重越高，但设置了上限避免过度放大。
             int weight = Math.min(keyword.length() * 4, 40);
             // 来源中的关键词命中更珍贵，所以在基础权重上再额外加一点。
@@ -204,10 +218,10 @@ public class FundAppLocalDocumentRetriever {
         int anchor = findAnchorIndex(text, keywords);
         if (anchor < 0) {
             // 如果完全找不到锚点，就退化成简单截断。
-            return abbreviate(text, 220);
+            return abbreviate(text, 420);
         }
-        int start = Math.max(0, anchor - 60);
-        int end = Math.min(text.length(), anchor + 160);
+        int start = Math.max(0, anchor - 80);
+        int end = Math.min(text.length(), anchor + 360);
         String snippet = text.substring(start, end).trim();
         if (start > 0) {
             // 前面被截断时补省略号。

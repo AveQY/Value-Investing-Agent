@@ -40,7 +40,7 @@ public class WebSearchTool {
     private static final int MAX_RESULTS = 6;
     private static final int MAX_FETCHED_PAGES = 3;
     private static final int MAX_RAW_CONTENT_LENGTH = 40_000;
-    private static final int MAX_SNIPPET_LENGTH = 600;
+    private static final int MAX_SNIPPET_LENGTH = 800;
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.ALWAYS)
             .connectTimeout(Duration.ofSeconds(15))
@@ -75,8 +75,9 @@ public class WebSearchTool {
                 }
 
                 JSONObject item = new JSONObject();
+                String displayUrl = firstNonBlank(pageSnapshot.resolvedUrl(), result.url());
                 item.set("title", firstNonBlank(pageSnapshot.title(), result.title()));
-                item.set("url", result.url());
+                item.set("url", displayUrl);
                 item.set("content", firstNonBlank(
                         result.snippet(),
                         pageSnapshot.summary(),
@@ -86,7 +87,7 @@ public class WebSearchTool {
                 item.set("raw_content", pageSnapshot.rawContent());
                 item.set("raw_content_truncated", pageSnapshot.truncated());
                 item.set("raw_content_original_length", pageSnapshot.originalLength());
-                item.set("favicon", firstNonBlank(result.favicon(), faviconFromUrl(result.url())));
+                item.set("favicon", firstNonBlank(result.favicon(), faviconFromUrl(displayUrl)));
                 item.set("engine", result.engine());
                 formattedResults.add(item);
                 answerSources.add(item);
@@ -350,26 +351,24 @@ public class WebSearchTool {
 
             boolean truncated = rawText.length() > MAX_RAW_CONTENT_LENGTH;
             String safeRawText = truncated ? rawText.substring(0, MAX_RAW_CONTENT_LENGTH).trim() : rawText;
-            return new PageSnapshot(title, summary, safeRawText, rawText.length(), truncated);
+            return new PageSnapshot(title, summary, safeRawText, rawText.length(), truncated, resolveFinalUrl(url, response.finalUrl()));
         } catch (Exception ignored) {
             return PageSnapshot.empty();
         }
     }
 
-    private String buildSearchQuery(String query) {
-        String normalized = normalizeText(query);
-        if (!StringUtils.hasText(normalized)) {
+    private String resolveFinalUrl(String requestedUrl, String fetchedUrl) {
+        if (!StringUtils.hasText(fetchedUrl) || !fetchedUrl.startsWith("http")) {
             return "";
         }
+        // 请求地址与最终地址不同说明发生了跳转（如搜狗 /link?url= 中转），优先展示真实来源。
+        return fetchedUrl.equals(requestedUrl) ? "" : fetchedUrl;
+    }
 
-        String lower = normalized.toLowerCase(Locale.ROOT);
-        if (containsAny(lower,
-                "股票", "股价", "财报", "公告", "基金", "指数", "上市公司", "市值", "估值",
-                "营收", "营业收入", "净利润", "现金流", "债务", "资产负债率", "roe", "roic",
-                "stock", "share", "earnings", "financial", "finance", "listed company")) {
-            return normalized + " 财经";
-        }
-        return normalized + " 股票 上市公司 财经";
+    private String buildSearchQuery(String query) {
+        // 不再给搜索词追加“股票/财经”等泛化后缀：规划器给出的查询词已贴合用户问题，
+        // 追加后缀会把结果带偏到泛财经门户页，降低命中率。
+        return normalizeText(query);
     }
 
     private boolean isRelevantResult(String query, SearchResult result) {
@@ -440,7 +439,8 @@ public class WebSearchTool {
 
             HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             String contentType = response.headers().firstValue("Content-Type").orElse("");
-            return new HttpFetchResponse(response.body(), contentType);
+            // response.uri() 是跟随重定向后的最终地址，可用于把搜狗 /link?url= 跳转链还原成真实来源。
+            return new HttpFetchResponse(response.body(), contentType, String.valueOf(response.uri()));
         } catch (Exception ignored) {
             return HttpFetchResponse.empty();
         }
@@ -656,10 +656,10 @@ public class WebSearchTool {
                                 String engine) {
     }
 
-    private record HttpFetchResponse(String body, String contentType) {
+    private record HttpFetchResponse(String body, String contentType, String finalUrl) {
 
         private static HttpFetchResponse empty() {
-            return new HttpFetchResponse("", "");
+            return new HttpFetchResponse("", "", "");
         }
     }
 
@@ -667,10 +667,11 @@ public class WebSearchTool {
                                 String summary,
                                 String rawContent,
                                 int originalLength,
-                                boolean truncated) {
+                                boolean truncated,
+                                String resolvedUrl) {
 
         private static PageSnapshot empty() {
-            return new PageSnapshot("", "", null, 0, false);
+            return new PageSnapshot("", "", null, 0, false, "");
         }
 
         private boolean hasContent() {

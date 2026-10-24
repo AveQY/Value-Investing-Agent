@@ -60,8 +60,8 @@ public class FundApp {
     private final ToolCallback[] allTools;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final ToolLoopLimit TOOL_LOOP_LIMIT = ToolLoopRuntimeConfig.TOOLS_MODE;
-    private static final int MAX_TRACE_ARGUMENT_LENGTH = 360;
-    private static final int MAX_TRACE_OUTPUT_PREVIEW_LENGTH = 1200;
+    private static final int MAX_TRACE_ARGUMENT_LENGTH = 800;
+    private static final int MAX_TRACE_OUTPUT_PREVIEW_LENGTH = 4000;
     private static final int RAG_REFERENCE_LIMIT = 3;
     private static final Pattern YEAR_LIMIT_PATTERN = Pattern.compile("(最近|近|过去)?\\s*(\\d{1,2})\\s*年");
     private static final Pattern ASHARE_CODE_PATTERN = Pattern.compile("(?i)(?:\\b(?:sh|sz|bj)\\d{6}\\b|\\b\\d{6}(?:\\.(?:SH|SZ|BJ))?\\b)");
@@ -90,6 +90,12 @@ public class FundApp {
             你需要优先基于这些资料回答问题，并明确区分“资料中已有的信息”和你自己的补充解释。
             如果资料涉及价值投资框架（如护城河、安全边际、能力圈、复利、市场先生），优先用这些框架组织答案。
             如果资料不足，请明确说明资料覆盖范围有限，不要编造不存在的文档内容。
+            """;
+
+    private static final String RAG_BACKGROUND_PROMPT = """
+            下面会提供一组本地知识库片段，仅作为分析框架的背景参考。
+            本次回答已经拿到了外部工具查询到的实时结果（行情、财报、搜索等），事实性内容必须以工具结果为准。
+            知识库片段只用于组织分析框架（如护城河、安全边际、能力圈）；如果片段与工具结果冲突或明显无关，直接忽略片段，不要为了迁就资料改变结论。
             """;
 
     private static final String TOOL_ROUTER_PROMPT = """
@@ -427,17 +433,17 @@ public class FundApp {
             return directReply;
         }
 
-        RetrievedRagContext ragContext = retrieveRagContext(message);
         List<ToolExecutionResult> toolResults = allowToolResolution && shouldAttemptToolResolution(message)
                 ? resolveToolResults(message, modelId)
                 : List.of();
+        RetrievedRagContext ragContext = retrieveRagContext(message, toolResults.isEmpty());
         ChatTrace trace = buildTrace(toolResults, ragContext.documents());
         ChatResponse chatResponse = chatModelExecutionService.executeWithRetry("RAG 对话", () -> createConversationClient(modelId)
                 .prompt()
                 .system(buildSystemPrompt(
                         SYSTEM_PROMPT,
                         style,
-                        RAG_PROMPT,
+                        toolResults.isEmpty() ? RAG_PROMPT : RAG_BACKGROUND_PROMPT,
                         buildToolSynthesisPrompt(message, toolResults)
                 ))
                 .user(buildKnowledgeGroundedUserMessage(ragContext.context(), message))
@@ -473,10 +479,10 @@ public class FundApp {
             return Flux.just(directReply);
         }
 
-        RetrievedRagContext ragContext = retrieveRagContext(message);
         List<ToolExecutionResult> toolResults = allowToolResolution && shouldAttemptToolResolution(message)
                 ? resolveToolResults(message, modelId)
                 : List.of();
+        RetrievedRagContext ragContext = retrieveRagContext(message, toolResults.isEmpty());
         ChatTrace trace = buildTrace(toolResults, ragContext.documents());
         log.info("ragContext: {}", ragContext.context());
         return chatModelExecutionService.streamWithRetryAndFallback(
@@ -486,7 +492,7 @@ public class FundApp {
                                 .system(buildSystemPrompt(
                                         SYSTEM_PROMPT,
                                         style,
-                                        RAG_PROMPT,
+                                        toolResults.isEmpty() ? RAG_PROMPT : RAG_BACKGROUND_PROMPT,
                                         buildToolSynthesisPrompt(message, toolResults)
                                 ))
                                 .user(buildKnowledgeGroundedUserMessage(ragContext.context(), message))
@@ -498,7 +504,7 @@ public class FundApp {
                                 .system(buildSystemPrompt(
                                         SYSTEM_PROMPT,
                                         style,
-                                        RAG_PROMPT,
+                                        toolResults.isEmpty() ? RAG_PROMPT : RAG_BACKGROUND_PROMPT,
                                         buildToolSynthesisPrompt(message, toolResults)
                                 ))
                                 .user(buildKnowledgeGroundedUserMessage(ragContext.context(), message))
@@ -524,15 +530,15 @@ public class FundApp {
         }
 
         AdvisorStyle style = resolveToolsModeAdvisorStyle(advisorStyle, "tools");
-        RetrievedRagContext ragContext = retrieveRagContext(message);
         List<ToolExecutionResult> toolResults = resolveToolResults(message, modelId);
         if (toolResults.isEmpty()) {
             return doChatWithRagInternal(message, chatId, style, modelId, false);
         }
+        RetrievedRagContext ragContext = retrieveRagContext(message, false);
 
         ChatResponse response = chatModelExecutionService.executeWithRetry("工具增强对话", () -> createConversationClient(modelId)
                 .prompt()
-                .system(buildSystemPrompt(SYSTEM_PROMPT, style, RAG_PROMPT, buildToolSynthesisPrompt(message, toolResults)))
+                .system(buildSystemPrompt(SYSTEM_PROMPT, style, RAG_BACKGROUND_PROMPT, buildToolSynthesisPrompt(message, toolResults)))
                 .user(buildKnowledgeGroundedUserMessage(ragContext.context(), message))
                 .advisors(spec -> spec.param(AbstractChatMemoryAdvisor.CHAT_MEMORY_CONVERSATION_ID_KEY, chatId))
                 .call()
@@ -558,24 +564,24 @@ public class FundApp {
             }
 
             AdvisorStyle style = resolveToolsModeAdvisorStyle(advisorStyle, "tools stream");
-            RetrievedRagContext ragContext = retrieveRagContext(message);
             List<ToolExecutionResult> toolResults = resolveToolResults(message, modelId);
             if (toolResults.isEmpty()) {
                 return doChatWithRagStreamInternal(message, chatId, style, modelId, false);
             }
+            RetrievedRagContext ragContext = retrieveRagContext(message, false);
 
             return chatModelExecutionService.streamWithRetryAndFallback(
                             "工具增强流式对话",
                             () -> createConversationClient(modelId)
                                     .prompt()
-                                    .system(buildSystemPrompt(SYSTEM_PROMPT, style, RAG_PROMPT, buildToolSynthesisPrompt(message, toolResults)))
+                                    .system(buildSystemPrompt(SYSTEM_PROMPT, style, RAG_BACKGROUND_PROMPT, buildToolSynthesisPrompt(message, toolResults)))
                                     .user(buildKnowledgeGroundedUserMessage(ragContext.context(), message))
                                     .advisors(spec -> spec.param(AbstractChatMemoryAdvisor.CHAT_MEMORY_CONVERSATION_ID_KEY, chatId))
                                     .stream()
                                     .content(),
                             () -> createConversationClient(modelId)
                                     .prompt()
-                                    .system(buildSystemPrompt(SYSTEM_PROMPT, style, RAG_PROMPT, buildToolSynthesisPrompt(message, toolResults)))
+                                    .system(buildSystemPrompt(SYSTEM_PROMPT, style, RAG_BACKGROUND_PROMPT, buildToolSynthesisPrompt(message, toolResults)))
                                     .user(buildKnowledgeGroundedUserMessage(ragContext.context(), message))
                                     .advisors(spec -> spec.param(AbstractChatMemoryAdvisor.CHAT_MEMORY_CONVERSATION_ID_KEY, chatId))
                                     .call()
@@ -724,7 +730,7 @@ public class FundApp {
         };
     }
 
-    private RetrievedRagContext retrieveRagContext(String query) {
+    private RetrievedRagContext retrieveRagContext(String query, boolean knowledgePriority) {
         List<FundAppLocalDocumentRetriever.RetrievedDocument> documents = localDocumentRetriever.search(query, RAG_REFERENCE_LIMIT);
         if (documents.isEmpty()) {
             return new RetrievedRagContext(
@@ -733,7 +739,10 @@ public class FundApp {
             );
         }
 
-        StringBuilder builder = new StringBuilder("以下内容来自本地知识库，请优先据此回答：\n");
+        String header = knowledgePriority
+                ? "以下内容来自本地知识库，请优先据此回答：\n"
+                : "以下内容来自本地知识库，仅供分析框架背景参考，事实以工具结果为准：\n";
+        StringBuilder builder = new StringBuilder(header);
         for (int index = 0; index < documents.size(); index++) {
             FundAppLocalDocumentRetriever.RetrievedDocument document = documents.get(index);
             builder.append(index + 1)
@@ -1259,20 +1268,9 @@ public class FundApp {
     }
 
     private String buildRealtimeSearchQuery(String message) {
+        // 搜索词保持贴近用户原问题，不再追加泛化后缀，避免污染搜索结果。
         String trimmed = StringUtils.trimWhitespace(message);
-        if (!StringUtils.hasText(trimmed)) {
-            return "最新 公告 新闻";
-        }
-
-        if (trimmed.contains("公告") || trimmed.contains("新闻") || trimmed.contains("资讯")) {
-            return trimmed + " 最新 公告 新闻";
-        }
-
-        if (trimmed.contains("研报") || trimmed.contains("官网") || trimmed.contains("链接")) {
-            return trimmed + " 官方链接 研报 公告";
-        }
-
-        return trimmed + " 最新 外部公开信息";
+        return StringUtils.hasText(trimmed) ? trimmed : "最新财经资讯";
     }
 
     private FinancialReportArguments buildFinancialReportArguments(String message) {
