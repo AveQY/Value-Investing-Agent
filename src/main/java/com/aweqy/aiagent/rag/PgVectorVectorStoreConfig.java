@@ -3,10 +3,14 @@ package com.aweqy.aiagent.rag;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.Embedding;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
+import org.springframework.ai.openai.OpenAiEmbeddingModel;
+import org.springframework.ai.openai.OpenAiEmbeddingOptions;
+import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -16,8 +20,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.util.StringUtils;
+import org.springframework.web.client.RestClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,9 +65,41 @@ public class PgVectorVectorStoreConfig {
     @Value("${spring.ai.vectorstore.pgvector.max-document-batch-size:10000}")
     private int maxDocumentBatchSize;
 
+    /**
+     * 独立的向量模型客户端，直连 SiliconFlow 等支持 embedding 的供应商。
+     * 与 chat 链路（spring.ai.openai / ChatModelRegistryService 自建客户端）完全解耦。
+     */
+    @Bean("siliconFlowEmbeddingModel")
+    public EmbeddingModel siliconFlowEmbeddingModel(
+            @Value("${app.rag.embedding.base-url:https://api.siliconflow.cn}") String baseUrl,
+            @Value("${app.rag.embedding.api-key:}") String apiKey,
+            @Value("${app.rag.embedding.model:BAAI/bge-m3}") String embeddingModel) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(10_000);
+        requestFactory.setReadTimeout(60_000);
+        OpenAiApi openAiApi = OpenAiApi.builder()
+                .baseUrl(normalizeEmbeddingBaseUrl(baseUrl))
+                .apiKey(apiKey)
+                .restClientBuilder(RestClient.builder().requestFactory(requestFactory))
+                .build();
+        return new OpenAiEmbeddingModel(openAiApi, MetadataMode.EMBED,
+                OpenAiEmbeddingOptions.builder().model(embeddingModel).build());
+    }
+
     @Bean("pgVectorEmbeddingModel")
-    public EmbeddingModel pgVectorEmbeddingModel(@Qualifier("openAiEmbeddingModel") EmbeddingModel embeddingModel) {
+    public EmbeddingModel pgVectorEmbeddingModel(@Qualifier("siliconFlowEmbeddingModel") EmbeddingModel embeddingModel) {
         return new ResilientEmbeddingModel(embeddingModel, dimensions);
+    }
+
+    private String normalizeEmbeddingBaseUrl(String baseUrl) {
+        String normalized = StringUtils.trimWhitespace(baseUrl);
+        while (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        if (normalized.endsWith("/v1")) {
+            normalized = normalized.substring(0, normalized.length() - 3);
+        }
+        return normalized;
     }
 
     @Bean
@@ -80,9 +118,17 @@ public class PgVectorVectorStoreConfig {
                 .vectorTableName(vectorTableName)    // Optional: defaults to "vector_store"
                 .maxDocumentBatchSize(maxDocumentBatchSize)
                 .build();
+        // Spring 要等 @Bean 方法返回后才回调 afterPropertiesSet() 执行建表 DDL，
+        // 而入库必须发生在本方法内，所以先手动触发一次（DDL 均为 IF NOT EXISTS，幂等安全）。
+        vectorStore.afterPropertiesSet();
         if (isVectorTableEmpty(jdbcTemplate)) {
             List<Document> documents = fundAppDocumentLoader.loadMarkdowns();
-            vectorStore.add(documents);
+            // 分批向量化：embedding 供应商通常限制单次批量（SiliconFlow bge-m3 为 32 条），
+            // 一批 16 条留出安全余量，避免一次性 85 条触发 400 后退化到本地哈希向量。
+            int batchSize = 16;
+            for (int start = 0; start < documents.size(); start += batchSize) {
+                vectorStore.add(documents.subList(start, Math.min(start + batchSize, documents.size())));
+            }
             log.info("initialized vector table {} with {} documents", vectorTableName, documents.size());
         } else {
             log.info("vector table {} already has data, skip reloading documents", vectorTableName);

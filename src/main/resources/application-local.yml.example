@@ -17,3 +17,16 @@ spring:
     url: jdbc:postgresql://localhost:5432/ai-agent
     username: postgres
     password: your-password
+
+app:
+  rag:
+    pgvector:
+      # 开启后走 pgvector 语义检索（需 PostgreSQL 安装 vector 扩展），关闭则仅用关键词检索
+      enabled: false
+    embedding:
+      # 向量模型供应商（与 chat 供应商相互独立），推荐 SiliconFlow 免费档 BAAI/bge-m3（1024 维）
+      base-url: https://api.siliconflow.cn
+      api-key: your-embedding-api-key
+      model: BAAI/bge-m3
+    # 语义相似度阈值，低于该分数的知识片段视为不相关；调低召回更多、调高更严格
+    vector-similarity-threshold: 0.5

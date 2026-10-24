@@ -2,6 +2,10 @@ package com.aweqy.aiagent.rag;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -35,12 +39,27 @@ public class FundAppLocalDocumentRetriever {
     // Markdown 文档加载器，负责把本地知识文件读取成 Spring AI 的 Document 对象
     private final FundAppDocumentLoader fundAppDocumentLoader;
 
+    // pgvector 向量库（只在 app.rag.pgvector.enabled=true 时存在），用于语义检索
+    private final ObjectProvider<PgVectorStore> vectorStoreProvider;
+
+    // 向量检索的相似度阈值，可通过 app.rag.vector-similarity-threshold 调整
+    private final double vectorSimilarityThreshold;
+
+    // 已解析的向量库缓存；embedding 服务故障时按冷却时间降级到关键词检索
+    private volatile PgVectorStore resolvedVectorStore;
+    private volatile long nextVectorAttemptAtMillis;
+    private static final long VECTOR_FAILURE_COOLDOWN_MS = 5 * 60 * 1000L;
+
     // 已加载的本地文档缓存，首次读取后常驻内存，避免重复扫描磁盘。
     private volatile List<Document> cachedDocuments;
 
-    // 通过构造器注入文档加载器。
-    public FundAppLocalDocumentRetriever(FundAppDocumentLoader fundAppDocumentLoader) {
+    // 通过构造器注入文档加载器与可选的向量库。
+    public FundAppLocalDocumentRetriever(FundAppDocumentLoader fundAppDocumentLoader,
+                                         ObjectProvider<PgVectorStore> vectorStoreProvider,
+                                         @Value("${app.rag.vector-similarity-threshold:0.5}") double vectorSimilarityThreshold) {
         this.fundAppDocumentLoader = fundAppDocumentLoader;
+        this.vectorStoreProvider = vectorStoreProvider;
+        this.vectorSimilarityThreshold = vectorSimilarityThreshold;
     }
 
     /**
@@ -71,7 +90,7 @@ public class FundAppLocalDocumentRetriever {
 
     /**
      * 对外提供的检索入口：
-     * 将查询词标准化、提取关键词、为每篇文档打分，然后返回最相关的若干片段。
+     * 优先走 pgvector 语义检索；向量库不可用（未启用/服务故障冷却中）时回落到关键词打分。
      */
     public List<RetrievedDocument> search(String query, int limit) {
         if (!StringUtils.hasText(query)) {
@@ -79,6 +98,95 @@ public class FundAppLocalDocumentRetriever {
             return List.of();
         }
 
+        List<RetrievedDocument> vectorResults = searchByVector(query, limit);
+        if (vectorResults != null) {
+            return vectorResults;
+        }
+        return searchByKeyword(query, limit);
+    }
+
+    /**
+     * 语义检索：查询文本向量化后在 pgvector 中做余弦相似度搜索。
+     * 返回 null 表示向量链路当前不可用（未启用或故障冷却中），由调用方回落关键词检索；
+     * 返回空列表表示语义上确认无相关资料，此时不再回落关键词，避免垃圾命中。
+     */
+    private List<RetrievedDocument> searchByVector(String query, int limit) {
+        PgVectorStore vectorStore = resolveVectorStore();
+        if (vectorStore == null) {
+            return null;
+        }
+        long now = System.currentTimeMillis();
+        if (now < nextVectorAttemptAtMillis) {
+            return null;
+        }
+        try {
+            List<Document> documents = vectorStore.similaritySearch(SearchRequest.builder()
+                    .query(query)
+                    .topK(limit)
+                    .similarityThreshold(vectorSimilarityThreshold)
+                    .build());
+            if (documents == null || documents.isEmpty()) {
+                log.info("vector search no hit above threshold {} for query: {}", vectorSimilarityThreshold, query);
+                return List.of();
+            }
+            log.info("vector search hits={} topSimilarity={} threshold={} query: {}",
+                    documents.size(), String.format(Locale.ROOT, "%.3f", similarityOf(documents.get(0))),
+                    vectorSimilarityThreshold, query);
+            List<String> keywords = extractKeywords(normalize(query));
+            return documents.stream()
+                    .map(document -> new RetrievedDocument(
+                            resolveSource(document),
+                            buildSnippet(document, keywords),
+                            similarityScore(document)
+                    ))
+                    .toList();
+        } catch (Exception ex) {
+            // embedding 服务或数据库故障：进入冷却期，期间全部走关键词检索，保证服务可用。
+            nextVectorAttemptAtMillis = now + VECTOR_FAILURE_COOLDOWN_MS;
+            log.warn("vector search failed, fallback to keyword search for {} minutes. reason: {}",
+                    VECTOR_FAILURE_COOLDOWN_MS / 60000, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 解析并缓存向量库实例；未启用 pgvector 时返回 null。
+     */
+    private PgVectorStore resolveVectorStore() {
+        PgVectorStore vectorStore = resolvedVectorStore;
+        if (vectorStore != null) {
+            return vectorStore;
+        }
+        vectorStore = vectorStoreProvider.getIfAvailable();
+        if (vectorStore != null) {
+            resolvedVectorStore = vectorStore;
+        }
+        return vectorStore;
+    }
+
+    /**
+     * 从 pgvector 返回的 distance 元数据换算 0-100 的展示分数（余弦相似度）。
+     */
+    private int similarityScore(Document document) {
+        return (int) Math.round(Math.max(0d, Math.min(1d, similarityOf(document))) * 100);
+    }
+
+    /**
+     * 余弦相似度原值（1 - distance）；pgvector 未返回 distance 时按 0 处理。
+     */
+    private double similarityOf(Document document) {
+        Object distance = document.getMetadata() == null ? null : document.getMetadata().get("distance");
+        if (distance instanceof Number number) {
+            return 1d - number.doubleValue();
+        }
+        return 0d;
+    }
+
+    /**
+     * 关键词检索兜底路径（原有逻辑）：
+     * 将查询词标准化、提取关键词、为每篇文档打分，然后返回最相关的若干片段。
+     */
+    private List<RetrievedDocument> searchByKeyword(String query, int limit) {
         // 统一大小写和符号格式，降低匹配噪声。
         String normalizedQuery = normalize(query);
         // 从查询中提取关键词和 n-gram，增强中文短语命中能力。
@@ -223,6 +331,11 @@ public class FundAppLocalDocumentRetriever {
         int start = Math.max(0, anchor - 80);
         int end = Math.min(text.length(), anchor + 360);
         String snippet = text.substring(start, end).trim();
+        if (snippet.length() < 120) {
+            // 锚点离文末太近导致窗口过短时，向前扩展取整段上下文。
+            int from = Math.max(0, anchor - 360);
+            return abbreviate(text.substring(from), 420);
+        }
         if (start > 0) {
             // 前面被截断时补省略号。
             snippet = "..." + snippet;
